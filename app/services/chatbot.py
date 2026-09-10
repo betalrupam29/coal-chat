@@ -1,7 +1,7 @@
 from groq import Groq
 
 from app.config import settings
-from app.services.rag import rag
+from app.services.rag import get_rag
 from app.services.memory import conversation_memory
 from app.services.safety import is_emergency
 from app.utils.language import (
