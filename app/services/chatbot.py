@@ -21,69 +21,79 @@ MODEL_NAME = "openai/gpt-oss-120b"
 SYSTEM_PROMPT = """
 You are a Coal Mine Worker Assistant.
 
-Your job is to help coal mine workers understand
-company policies, safety procedures, benefits,
-workplace rules and general information.
+Your job is to help coal mine workers understand:
+- company policies
+- safety procedures
+- benefits
+- workplace rules
+- general information
 
 IMPORTANT RULES:
 
-1. Company policy information must come from the
-   supplied policy documents.
+1. Company-specific policy information must come from the
+   supplied company policy documents.
 
-2. Never invent a company policy.
+2. Never invent company-specific policies.
 
-3. If the requested policy information is not present
-   in the supplied documents, clearly say:
+3. If the company policy documents do not contain relevant
+   information, do not refuse automatically.
 
-   "I could not find this information in the available
-   company policy documents."
+4. If policy information is unavailable, answer using
+   general knowledge when appropriate.
 
-4. Explain policies in very simple language.
+5. When answering using general knowledge, clearly state:
+   "This is general information, not a company-specific policy."
 
-5. Use short sentences.
+6. Never present general knowledge as company policy.
 
-6. Prefer bullet points when explaining procedures.
+7. Explain policies in very simple language.
 
-7. Do not use complicated legal or technical language
-   unless necessary.
+8. Use short sentences.
 
-8. Always respond in the requested language.
+9. Prefer bullet points when explaining procedures.
 
-9. Supported languages:
-   English
-   Hindi
-   Bengali
+10. Do not use complicated legal or technical language
+    unless necessary.
 
-10. If the worker asks a general question that is not
-   related to company policy, you may answer using
-   general knowledge.
+11. Always respond in the requested language.
 
-11. Do not pretend that general knowledge is company policy.
+12. Supported languages:
+    English
+    Hindi
+    Bengali
 
-12. For emergency situations, prioritize immediate safety.
+13. If the worker asks about Indian law, regulations,
+    or legal rights, clearly state that the information
+    is general information and should be verified with
+    the appropriate official authority, HR, or legal
+    department.
 
-13. Never invent mine-specific emergency phone numbers,
-   evacuation routes, assembly points or procedures.
+14. For emergency situations, prioritize immediate safety.
 
-14. If emergency information is not available in the
-   supplied company documents, tell the worker to follow
-   the official emergency procedure and contact the
-   designated mine emergency authority.
+15. Never invent mine-specific:
+    - emergency phone numbers
+    - evacuation routes
+    - assembly points
+    - emergency procedures
 
-15. Never claim that you contacted emergency services.
+16. If emergency information is not available in the
+    supplied company documents, tell the worker to follow
+    the official mine emergency procedure and contact
+    the designated mine emergency authority.
 
-16. Do not request unnecessary personal information.
+17. Never claim that you contacted emergency services.
 
-17. Do not identify or track individual workers.
+18. Do not request unnecessary personal information.
 
-18. The assistant is common for all workers.
+19. Do not identify or track individual workers.
+
+20. The assistant is common for all workers.
 """
 
 
 def classify_question(message: str) -> str:
 
     if is_emergency(message):
-
         return "emergency"
 
     policy_words = [
@@ -128,7 +138,6 @@ def classify_question(message: str) -> str:
     for word in policy_words:
 
         if word.lower() in message_lower:
-
             return "policy"
 
     return "general"
@@ -137,7 +146,6 @@ def classify_question(message: str) -> str:
 def build_context(results):
 
     if not results:
-
         return "No relevant company policy information was found."
 
     context_parts = []
@@ -164,7 +172,6 @@ def build_history(session_id):
     )
 
     if not history:
-
         return ""
 
     recent_history = history[-10:]
@@ -186,40 +193,92 @@ def generate_answer(
     requested_language: str = "auto"
 ):
 
+    # --------------------------------
+    # Language detection
+    # --------------------------------
+
     if requested_language == "auto":
-        language_code = detect_language(message)
+
+        language_code = detect_language(
+            message
+        )
+
     else:
+
         language_code = requested_language
 
-    language = language_name(language_code)
+    language = language_name(
+        language_code
+    )
 
-    category = classify_question(message)
+    # --------------------------------
+    # Question classification
+    # --------------------------------
+
+    category = classify_question(
+        message
+    )
+
+    # --------------------------------
+    # Load RAG only when needed
+    # --------------------------------
+
+    rag = get_rag()
 
     search_results = rag.search(
         message,
         top_k=4
     )
 
-    # Only use RAG if similarity is good enough
+    # --------------------------------
+    # RAG similarity threshold
+    # --------------------------------
+
     MIN_SCORE = 0.45
 
     relevant_results = [
+
         result
+
         for result in search_results
+
         if result["score"] >= MIN_SCORE
+
     ]
 
-    context = build_context(relevant_results)
-    history = build_history(session_id)
+    # --------------------------------
+    # Build context
+    # --------------------------------
+
+    context = build_context(
+        relevant_results
+    )
+
+    # --------------------------------
+    # Conversation memory
+    # --------------------------------
+
+    history = build_history(
+        session_id
+    )
+
+    # --------------------------------
+    # Decide answer mode
+    # --------------------------------
 
     if relevant_results:
+
         answer_mode = "COMPANY_POLICY"
+
     else:
+
         answer_mode = "GENERAL_KNOWLEDGE"
 
-    prompt = f"""
-{SYSTEM_PROMPT}
+    # --------------------------------
+    # Prompt
+    # --------------------------------
 
+    prompt = f"""
 RESPONSE LANGUAGE:
 {language}
 
@@ -243,10 +302,12 @@ IMPORTANT INSTRUCTIONS:
 If ANSWER MODE is COMPANY_POLICY:
 
 - Answer using the supplied company policy context.
-- Treat the context as the source of company-specific information.
+- Treat the context as the source of company-specific
+  information.
 - Do not invent company-specific rules.
 - Explain the policy in simple language.
-- If useful, mention the relevant policy document/page.
+- Use bullet points when useful.
+- If useful, mention the relevant document and page.
 
 If ANSWER MODE is GENERAL_KNOWLEDGE:
 
@@ -255,23 +316,27 @@ If ANSWER MODE is GENERAL_KNOWLEDGE:
 - Answer using your general knowledge.
 - Do NOT present the answer as company policy.
 - Start the answer with:
+
   "This is general information, not a company-specific policy."
-- If the question is about Indian law, regulations, or workers'
-  legal rights, make it clear that this is general information
-  and that the worker should verify the current law with the
-  appropriate official authority or company HR/legal department.
-- Do not invent company-specific benefits, salaries, leave rules,
-  emergency numbers, procedures, or policies.
+
+- If the question is about Indian law, regulations, or
+  workers' legal rights, clearly say that this is general
+  information and should be verified with the appropriate
+  official authority, HR, or legal department.
+- Do not invent company-specific benefits, salaries,
+  leave rules, emergency numbers, procedures, or policies.
 
 For emergency questions:
 
 - Prioritize immediate safety.
-- Use company policy context if relevant information is available.
-- Never invent mine-specific emergency numbers, evacuation routes,
-  assembly points, or procedures.
+- Use company policy context if relevant information
+  is available.
+- Never invent mine-specific emergency numbers,
+  evacuation routes, assembly points, or procedures.
 - If the required emergency information is not available,
   instruct the worker to follow the official mine emergency
-  procedure and contact the designated mine emergency authority.
+  procedure and contact the designated mine emergency
+  authority.
 
 GENERAL RULES:
 
@@ -284,7 +349,12 @@ GENERAL RULES:
 Answer the worker now.
 """
 
+    # --------------------------------
+    # Groq LLM
+    # --------------------------------
+
     response = client.chat.completions.create(
+
         model=MODEL_NAME,
 
         messages=[
@@ -301,7 +371,15 @@ Answer the worker now.
         temperature=0.2
     )
 
+    # --------------------------------
+    # Get answer
+    # --------------------------------
+
     answer = response.choices[0].message.content
+
+    # --------------------------------
+    # Save conversation
+    # --------------------------------
 
     conversation_memory.add_message(
         session_id,
@@ -315,18 +393,36 @@ Answer the worker now.
         answer
     )
 
+    # --------------------------------
+    # Sources
+    # --------------------------------
+
     sources = []
 
     for result in relevant_results:
+
         sources.append({
+
             "document": result["document"],
+
             "page": result["page"]
+
         })
 
+    # --------------------------------
+    # Return API response
+    # --------------------------------
+
     return {
+
         "answer": answer,
+
         "language": language_code,
+
         "category": category,
+
         "session_id": session_id,
+
         "sources": sources
+
     }
