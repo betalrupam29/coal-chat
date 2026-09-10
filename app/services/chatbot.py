@@ -234,7 +234,7 @@ def generate_answer(
     # RAG similarity threshold
     # --------------------------------
 
-    MIN_SCORE = 0.45
+    MIN_SCORE = 0.15
 
     relevant_results = [
 
