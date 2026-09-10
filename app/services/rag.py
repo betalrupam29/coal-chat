@@ -1,45 +1,21 @@
 from pathlib import Path
-import pickle
-
-import faiss
-import numpy as np
+import re
 
 from pypdf import PdfReader
-from sentence_transformers import SentenceTransformer
 
 
 PDF_PATH = Path("documents/company_policy.pdf")
-
-VECTOR_DB_PATH = Path("vector_db")
-
-INDEX_PATH = VECTOR_DB_PATH / "policy.index"
-DATA_PATH = VECTOR_DB_PATH / "policy_data.pkl"
-
-
-EMBEDDING_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
 
 class PolicyRAG:
 
     def __init__(self):
 
-        self.model = SentenceTransformer(EMBEDDING_MODEL)
-
-        self.index = None
         self.documents = []
 
-        VECTOR_DB_PATH.mkdir(
-            parents=True,
-            exist_ok=True
-        )
+        if PDF_PATH.exists():
 
-        if INDEX_PATH.exists() and DATA_PATH.exists():
-
-            self.load_index()
-
-        elif PDF_PATH.exists():
-
-            self.build_index()
+            self.build_documents()
 
         else:
 
@@ -49,7 +25,9 @@ class PolicyRAG:
 
     def extract_pdf(self):
 
-        reader = PdfReader(str(PDF_PATH))
+        reader = PdfReader(
+            str(PDF_PATH)
+        )
 
         pages = []
 
@@ -72,8 +50,8 @@ class PolicyRAG:
     def split_text(
         self,
         pages,
-        chunk_size=800,
-        overlap=100
+        chunk_size=500,
+        overlap=50
     ):
 
         chunks = []
@@ -81,6 +59,7 @@ class PolicyRAG:
         for page_data in pages:
 
             page_number = page_data["page"]
+
             text = page_data["text"]
 
             words = text.split()
@@ -91,92 +70,67 @@ class PolicyRAG:
 
                 end = start + chunk_size
 
-                chunk_words = words[start:end]
+                chunk_words = words[
+                    start:end
+                ]
 
-                chunk = " ".join(chunk_words)
+                chunk = " ".join(
+                    chunk_words
+                )
 
                 if chunk.strip():
 
                     chunks.append({
+
                         "text": chunk,
+
                         "page": page_number,
+
                         "document": PDF_PATH.name
+
                     })
 
-                start += chunk_size - overlap
+                start += (
+                    chunk_size - overlap
+                )
 
         return chunks
 
-    def build_index(self):
+    def build_documents(self):
 
-        print("Building RAG index...")
+        print(
+            "Loading company policy PDF..."
+        )
 
         pages = self.extract_pdf()
 
         if not pages:
 
-            raise ValueError(
-                "No readable text found in the PDF."
+            print(
+                "WARNING: No readable text found in PDF."
             )
 
-        chunks = self.split_text(pages)
+            return
 
-        texts = [
-            chunk["text"]
-            for chunk in chunks
-        ]
-
-        embeddings = self.model.encode(
-            texts,
-            convert_to_numpy=True,
-            normalize_embeddings=True
+        self.documents = self.split_text(
+            pages
         )
-
-        embeddings = embeddings.astype(
-            "float32"
-        )
-
-        dimension = embeddings.shape[1]
-
-        self.index = faiss.IndexFlatIP(
-            dimension
-        )
-
-        self.index.add(embeddings)
-
-        self.documents = chunks
-
-        faiss.write_index(
-            self.index,
-            str(INDEX_PATH)
-        )
-
-        with open(DATA_PATH, "wb") as f:
-
-            pickle.dump(
-                self.documents,
-                f
-            )
 
         print(
-            f"RAG index created with {len(chunks)} chunks."
+            f"Loaded {len(self.documents)} policy chunks."
         )
 
-    def load_index(self):
+    def tokenize(self, text):
 
-        print("Loading existing RAG index...")
+        text = text.lower()
 
-        self.index = faiss.read_index(
-            str(INDEX_PATH)
+        tokens = re.findall(
+            r"\w+",
+            text,
+            flags=re.UNICODE
         )
 
-        with open(DATA_PATH, "rb") as f:
-
-            self.documents = pickle.load(f)
-
-        print(
-            f"Loaded {len(self.documents)} chunks."
-        )
+        return set(tokens)
 
     def search(
         self,
@@ -184,54 +138,89 @@ class PolicyRAG:
         top_k: int = 4
     ):
 
-        if self.index is None:
+        if not self.documents:
 
             return []
 
-        query_embedding = self.model.encode(
-            [query],
-            convert_to_numpy=True,
-            normalize_embeddings=True
+        query_tokens = self.tokenize(
+            query
         )
 
-        query_embedding = query_embedding.astype(
-            "float32"
-        )
+        if not query_tokens:
 
-        scores, indices = self.index.search(
-            query_embedding,
-            top_k
-        )
+            return []
 
         results = []
 
-        for score, index in zip(
-            scores[0],
-            indices[0]
-        ):
+        for document in self.documents:
 
-            if index == -1:
+            document_tokens = self.tokenize(
+                document["text"]
+            )
+
+            matched_tokens = (
+                query_tokens
+                & document_tokens
+            )
+
+            if not matched_tokens:
+
                 continue
 
-            document = self.documents[index]
+            # Percentage of query words
+            # found in the document
+            coverage = (
+                len(matched_tokens)
+                / len(query_tokens)
+            )
+
+            # Extra score for exact phrase
+            phrase_bonus = 0
+
+            query_lower = query.lower()
+
+            document_lower = (
+                document["text"].lower()
+            )
+
+            if query_lower in document_lower:
+
+                phrase_bonus = 0.3
+
+            score = min(
+                coverage + phrase_bonus,
+                1.0
+            )
 
             results.append({
+
                 "text": document["text"],
+
                 "page": document["page"],
+
                 "document": document["document"],
-                "score": float(score)
+
+                "score": score
+
             })
 
-        return results
+        results.sort(
+            key=lambda x: x["score"],
+            reverse=True
+        )
+
+        return results[:top_k]
 
 
 rag = None
 
 
 def get_rag():
+
     global rag
 
     if rag is None:
+
         rag = PolicyRAG()
 
     return rag
