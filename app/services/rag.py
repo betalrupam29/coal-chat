@@ -225,4 +225,13 @@ class PolicyRAG:
         return results
 
 
-rag = PolicyRAG()
+rag = None
+
+
+def get_rag():
+    global rag
+
+    if rag is None:
+        rag = PolicyRAG()
+
+    return rag
